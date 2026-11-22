@@ -66,23 +66,37 @@
   /* ---------- голосовой ввод ---------- */
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   function voiceOn() { return !!SR && S.settings.voice !== false; }
-  function listen(cb) {
-    var r = new SR(), done = false;
-    r.lang = 'fr-FR'; r.maxAlternatives = 6; r.interimResults = false; r.continuous = false;
-    function fin(o) { if (done) return; done = true; cb(o); }
+  // st(state, text): 'ready' — микрофон действительно включился; 'heard' — промежуточный текст
+  function listen(cb, st) {
+    var r = new SR(), done = false, alts = [], sil = null, max = null;
+    r.lang = 'fr-FR'; r.maxAlternatives = 6; r.interimResults = true; r.continuous = true;
+    function note(state, text) { if (st) st(state, text); }
+    function fin(o) {
+      if (done) return; done = true; clearTimeout(sil); clearTimeout(max);
+      try { r.stop(); } catch (e) { /* ок */ }
+      cb(o);
+    }
+    r.onstart = function () { note('ready'); };
+    r.onaudiostart = function () { note('ready'); };
     r.onresult = function (e) {
-      var alts = [];
-      for (var i = 0; i < e.results[0].length; i++) alts.push(e.results[0][i].transcript);
-      fin({ alts: alts });
+      var res = e.results[e.results.length - 1], list = [];
+      for (var i = 0; i < res.length; i++) list.push(res[i].transcript);
+      if (list.length) { alts = list; note('heard', list[0]); }
+      clearTimeout(sil);
+      sil = setTimeout(function () { try { r.stop(); } catch (x) { fin(alts.length ? { alts: alts } : { err: 'no-speech' }); } }, res.isFinal ? 150 : 1400);
     };
-    r.onerror = function (e) { fin({ err: e.error || 'error' }); };
-    r.onend = function () { fin({ err: 'no-speech' }); };
+    r.onerror = function (e) {
+      if (e.error === 'no-speech' && alts.length) return fin({ alts: alts });
+      fin({ err: e.error || 'error' });
+    };
+    r.onend = function () { fin(alts.length ? { alts: alts } : { err: 'no-speech' }); };
+    max = setTimeout(function () { try { r.stop(); } catch (x) { fin({ err: 'no-speech' }); } }, 9000);
     try { r.start(); } catch (e) { fin({ err: 'start' }); }
     return r;
   }
   function voiceErr(code) {
     if (code === 'not-allowed' || code === 'service-not-allowed') return 'Нет доступа к микрофону. Разрешите его для сайта в настройках браузера (нужна страница по HTTPS, не предпросмотр).';
-    if (code === 'no-speech') return 'Ничего не услышал. Нажмите на микрофон и скажите слово.';
+    if (code === 'no-speech') return 'Ничего не услышал. Дождитесь надписи «Говорите» и скажите слово чётко, не слишком тихо.';
     if (code === 'network') return 'Распознавание речи работает через интернет — нет связи.';
     if (code === 'audio-capture') return 'Микрофон не найден.';
     return 'Не удалось распознать (' + code + '). Напишите ответ.';
@@ -97,7 +111,7 @@
   function micAnswer() {
     if (!ses || ses.rec) return stopRec();
     var id = ses.queue[0];
-    micOn(true); setText('hint', 'Слушаю… скажите глагол по-французски');
+    micOn(true); setText('hint', 'Подождите секунду…');
     ses.rec = listen(function (o) {
       if (!ses || ses.kind !== 'review' || ses.queue[0] !== id) return;
       ses.rec = null; micOn(false);
@@ -105,13 +119,17 @@
       var r = L.checkSpoken(V, id, o.alts);
       if (r.kind === 'wrong') return setText('hint', 'Услышал: «' + (o.alts[0] || '') + '» — не совпало. Скажите ещё раз, напишите или нажмите «Не знаю».');
       ses.res = r; renderReview();
+    }, function (state, t) {
+      if (!ses || ses.queue[0] !== id) return;
+      setText('hint', state === 'ready' ? '🎙 Говорите (одно слово, по-французски)…' : 'Слышу: «' + t + '»');
+      if (state === 'ready') buzz(10);
     });
   }
   // проверка произношения на новой карточке (без оценки)
   function micSay() {
     if (!ses || ses.rec) return stopRec();
     var id = ses.ids[ses.i];
-    micOn(true); setText('say', 'Слушаю…');
+    micOn(true); setText('say', 'Подождите секунду…');
     ses.rec = listen(function (o) {
       if (!ses || ses.kind !== 'intro' || ses.ids[ses.i] !== id) return;
       ses.rec = null; micOn(false);
@@ -120,6 +138,9 @@
       var ok = r.kind !== 'wrong';
       setText('say', ok ? '✓ Распознано: «' + r.heard + '»' : 'Услышал «' + (o.alts[0] || '') + '». Послушайте образец 🔊 и попробуйте ещё раз.');
       buzz(ok ? 12 : [30, 40, 30]);
+    }, function (state, t) {
+      if (!ses || ses.ids[ses.i] !== id) return;
+      setText('say', state === 'ready' ? '🎙 Говорите…' : 'Слышу: «' + t + '»');
     });
   }
   function btn(act, label, cls, arg) {
