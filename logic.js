@@ -9,27 +9,28 @@
   var PASS_PCT = 80;
   var DUE_LIMIT_FOR_NEW = 40; // при большем числе просроченных новые слова не вводятся
 
-  // Этапы: учим блок из 50 -> тест блока; после каждых двух блоков — тест на 100.
-  var STAGES = [
-    { id: 'L1', type: 'learn', from: 0, to: 50, title: 'Глаголы 1–50' },
-    { id: 'T1', type: 'test', from: 0, to: 50, title: 'Тест: глаголы 1–50' },
-    { id: 'L2', type: 'learn', from: 50, to: 100, title: 'Глаголы 51–100' },
-    { id: 'T2', type: 'test', from: 50, to: 100, title: 'Тест: глаголы 51–100' },
-    { id: 'T12', type: 'test', from: 0, to: 100, title: 'Большой тест: глаголы 1–100' },
-    { id: 'L3', type: 'learn', from: 100, to: 150, title: 'Глаголы 101–150' },
-    { id: 'T3', type: 'test', from: 100, to: 150, title: 'Тест: глаголы 101–150' },
-    { id: 'L4', type: 'learn', from: 150, to: 200, title: 'Глаголы 151–200' },
-    { id: 'T4', type: 'test', from: 150, to: 200, title: 'Тест: глаголы 151–200' },
-    { id: 'T34', type: 'test', from: 100, to: 200, title: 'Большой тест: глаголы 101–200' },
-    { id: 'L5', type: 'learn', from: 200, to: 250, title: 'Глаголы 201–250' },
-    { id: 'T5', type: 'test', from: 200, to: 250, title: 'Тест: глаголы 201–250' },
-    { id: 'L6', type: 'learn', from: 250, to: 300, title: 'Глаголы 251–300' },
-    { id: 'T6', type: 'test', from: 250, to: 300, title: 'Тест: глаголы 251–300' },
-    { id: 'T56', type: 'test', from: 200, to: 300, title: 'Большой тест: глаголы 201–300' }
-  ];
+  // Этапы: блоки по 25 глаголов; после каждых двух блоков (50) — тест на 50;
+  // после каждых четырёх (100) — ещё большой тест на эти 100.
+  var BLOCK = 25;
+  function genStages() {
+    var st = [];
+    for (var b = 0; b < 12; b++) {
+      st.push({ id: 'L' + (b + 1), type: 'learn', from: b * BLOCK, to: (b + 1) * BLOCK, title: 'Глаголы ' + (b * BLOCK + 1) + '–' + ((b + 1) * BLOCK) });
+      if (b % 2 === 1) {
+        var n = (b + 1) / 2, f = (b - 1) * BLOCK, t = (b + 1) * BLOCK;
+        st.push({ id: 'T' + n, type: 'test', from: f, to: t, title: 'Тест: глаголы ' + (f + 1) + '–' + t });
+        if (n % 2 === 0) {
+          var f2 = (n - 2) * 50, t2 = n * 50;
+          st.push({ id: 'TB' + (n / 2), type: 'test', from: f2, to: t2, title: 'Большой тест: глаголы ' + (f2 + 1) + '–' + t2 });
+        }
+      }
+    }
+    return st;
+  }
+  var STAGES = genStages();
 
   function emptyState() {
-    return { v: 1, cards: {}, tests: {}, daily: {}, settings: { sound: true, autoplay: false, voice: true, batch: 10 } };
+    return { v: 1, cards: {}, tests: {}, daily: {}, settings: { sound: true, autoplay: false, voice: true, typed: false, batch: 5 } };
   }
 
   function dayKey(ts) {
@@ -214,6 +215,30 @@
     return a;
   }
 
+  // 4 варианта: верный + 3 неверных (без пересечения по переводу). pool — желательные отвлекающие, затем любые.
+  function options(verbs, id, pool, rng) {
+    rng = rng || Math.random;
+    var opts = [id];
+    function fill(list) {
+      shuffle(list, rng).forEach(function (c) {
+        if (opts.length >= 4 || c === id || opts.indexOf(c) >= 0) return;
+        var ok = opts.every(function (o) { return !ruConflict(verbs[o].ru, verbs[c].ru); });
+        if (ok) opts.push(c);
+      });
+    }
+    fill((pool || []).slice());
+    if (opts.length < 4) fill(verbs.map(function (_, i) { return i; }));
+    return shuffle(opts, rng);
+  }
+
+  // Оценка без кнопок: по правильности с первой попытки и скорости
+  function autoGrade(correct, ms, reps) {
+    if (!correct) return 0;
+    if (ms > 9000) return 1;
+    if (ms <= 2500 && reps >= 2) return 3;
+    return 2;
+  }
+
   // Вопрос на каждый глагол диапазона; половина fr->ru, половина ru->fr.
   function buildTest(verbs, st, rng, extraPool) {
     rng = rng || Math.random;
@@ -222,14 +247,7 @@
     var order = shuffle(ids, rng);
     var dirs = shuffle(order.map(function (_, i) { return i % 2 === 0 ? 'fr2ru' : 'ru2fr'; }), rng);
     return order.map(function (id, qi) {
-      var dir = dirs[qi];
-      var cands = shuffle(pool.filter(function (o) { return o !== id && !ruConflict(verbs[o].ru, verbs[id].ru); }), rng);
-      var opts = [id];
-      for (var k = 0; k < cands.length && opts.length < 4; k++) {
-        var ok = opts.every(function (o) { return !ruConflict(verbs[o].ru, verbs[cands[k]].ru); });
-        if (ok) opts.push(cands[k]);
-      }
-      return { id: id, dir: dir, options: shuffle(opts, rng) };
+      return { id: id, dir: dirs[qi], options: options(verbs, id, pool, rng) };
     });
   }
 
@@ -284,6 +302,6 @@
     rangeIds: rangeIds, learnDone: learnDone, testDone: testDone, stageDone: stageDone,
     currentStageIndex: currentStageIndex, dueIds: dueIds, nextNewIds: nextNewIds, introduce: introduce,
     checkTyped: checkTyped, checkSpoken: checkSpoken, ruConflict: ruConflict, buildTest: buildTest, scoreTest: scoreTest,
-    recordTest: recordTest, stats: stats, streak: streak, dayKey: dayKey, shuffle: shuffle, bump: bump
+    recordTest: recordTest, options: options, autoGrade: autoGrade, BLOCK: BLOCK, stats: stats, streak: streak, dayKey: dayKey, shuffle: shuffle, bump: bump
   };
 });

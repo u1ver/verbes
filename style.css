@@ -143,3 +143,6 @@ input[type=checkbox]:checked{background:var(--green)}input[type=checkbox]:checke
 @keyframes micpulse{0%,100%{box-shadow:0 1px 0 rgba(255,255,255,.45) inset,0 4px 0 rgba(0,0,0,.22),0 0 0 0 rgba(255,59,48,.55)}50%{box-shadow:0 1px 0 rgba(255,255,255,.45) inset,0 4px 0 rgba(0,0,0,.22),0 0 0 16px rgba(255,59,48,0)}}
 .sayrow{display:flex;gap:12px;align-items:center;margin-top:6px;text-align:left}.sayrow .mic{width:46px;height:46px;font-size:20px}
 .three3{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:10px}.three3 .btn{font-size:15px;padding:12px 4px}
+.ru.big{font-size:34px;line-height:1.2}
+.cap{text-align:center;color:var(--mut);font-size:15px;min-height:22px;animation:pop .35s var(--spring) both}
+.opt:disabled{cursor:default}
